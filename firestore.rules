@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function roleIs(roles) { return signedIn() && me().role in roles && me().active == true; }
+    function sameBranch(branch) { return me().branch == 'Both' || me().branch == branch; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || roleIs(['admin']) ||
+        (resource.data.role == 'doctor' && resource.data.active == true));
+      allow create, update, delete: if roleIs(['admin']);
+    }
+
+    match /patients/{patientId} {
+      allow create: if !signedIn() || roleIs(['admin','doctor','receptionist','staff']);
+      allow read: if roleIs(['admin']) || (roleIs(['doctor','receptionist','staff']) && sameBranch(resource.data.branch));
+      allow update: if roleIs(['admin']) || (roleIs(['doctor','receptionist','staff']) && sameBranch(resource.data.branch));
+      allow delete: if false;
+    }
+
+    match /appointments/{appointmentId} {
+      allow create: if request.resource.data.status == 'Pending confirmation'
+        && request.resource.data.durationMinutes == 60
+        && request.resource.data.time in ['09:00','10:00','11:00','13:30','14:00','15:00','16:00','17:00','18:00'];
+      allow read: if roleIs(['admin']) ||
+        (roleIs(['receptionist','staff']) && sameBranch(resource.data.branch)) ||
+        (roleIs(['doctor']) && resource.data.doctorId == request.auth.uid);
+      allow update: if roleIs(['admin']) ||
+        (roleIs(['receptionist','staff']) && sameBranch(resource.data.branch)) ||
+        (roleIs(['doctor']) && resource.data.doctorId == request.auth.uid);
+      allow delete: if roleIs(['admin']);
+    }
+
+    match /bookingLocks/{lockId} {
+      allow read: if true;
+      allow create: if request.resource.data.doctorId is string && request.resource.data.date is string;
+      allow delete: if roleIs(['admin','doctor','receptionist','staff']);
+      allow update: if false;
+    }
+
+    match /patientSessions/{sessionId} {
+      allow read, create, update: if roleIs(['admin','doctor']);
+      allow delete: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow create: if signedIn();
+      allow read: if roleIs(['admin']);
+      allow update, delete: if false;
+    }
+  }
+}
